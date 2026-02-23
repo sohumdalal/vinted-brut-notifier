@@ -49,13 +49,14 @@ function buildCookieHeader(jar) {
     .join('; ');
 }
 
-// opts: { brandId, query, perPage }
-async function search({ brandId, query, perPage = 96 } = {}) {
+// opts: { brandId, query, perPage, page }
+async function searchPage({ brandId, query, perPage = 96, page = 1 } = {}) {
   if (!cookieJar) await fetchCookie();
 
   const params = new URLSearchParams({
     order: 'newest_first',
     per_page: String(perPage),
+    page: String(page),
   });
   if (brandId) params.set('brand_ids', String(brandId));
   if (query)   params.set('search_text', query);
@@ -78,10 +79,30 @@ async function search({ brandId, query, perPage = 96 } = {}) {
     console.log('[*] Session expired — refreshing cookie...');
     cookieJar = null;
     await fetchCookie();
-    return search({ brandId, query, perPage });
+    return searchPage({ brandId, query, perPage, page });
   }
 
-  return data.items ?? [];
+  return {
+    items: data.items ?? [],
+    totalPages: data.pagination?.total_pages ?? 1,
+    totalEntries: data.pagination?.total_entries ?? 0,
+  };
+}
+
+// Fetch all pages up to maxPages (default: all)
+async function search({ brandId, query, perPage = 96, maxPages = 1 } = {}) {
+  const first = await searchPage({ brandId, query, perPage, page: 1 });
+  const allItems = [...first.items];
+
+  const pagesToFetch = Math.min(maxPages, first.totalPages);
+
+  for (let page = 2; page <= pagesToFetch; page++) {
+    await new Promise((r) => setTimeout(r, 800)); // polite delay
+    const result = await searchPage({ brandId, query, perPage, page });
+    allItems.push(...result.items);
+  }
+
+  return { items: allItems, totalPages: first.totalPages, totalEntries: first.totalEntries };
 }
 
 module.exports = { search, fetchCookie };
