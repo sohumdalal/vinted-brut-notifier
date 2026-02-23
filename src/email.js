@@ -1,6 +1,6 @@
 const nodemailer = require('nodemailer');
 
-// Use explicit SMTP settings — Railway blocks port 465 (SSL) but allows 587 (STARTTLS)
+// Use explicit SMTP settings — port 587 (STARTTLS) is more broadly supported than 465 (SSL)
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
