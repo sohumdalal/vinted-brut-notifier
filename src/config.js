@@ -10,7 +10,7 @@ const QUERIES = ['Brut Archives', 'Brut Paris', 'Brut Clothing', 'BRUT'];
 const HIGH_CONFIDENCE_PHRASES = ['brut archives', 'brut paris', 'brut clothing'];
 
 // Brand titles registered on Vinted that correspond to the Brut clothing label.
-const BRUT_BRANDS = new Set(['brut', 'brut clothing']);
+const BRUT_BRANDS = new Set(['brut', 'brut clothing', 'brut archives']);
 
 // Keywords that indicate the item is clearly NOT clothing.
 // Applied only when matching via the brand cross-check (not phrase matches).
