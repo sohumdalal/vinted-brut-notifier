@@ -12,6 +12,7 @@ const ALGOLIA_INDEX = 'Listing_by_heat_production';
 const ALGOLIA_URL = `https://${ALGOLIA_APP_ID}.algolia.net/1/indexes/${ALGOLIA_INDEX}/query`;
 
 const CONDITION_MAP = {
+  is_new:          'New',
   is_not_worn:     'New / Not Worn',
   is_gently_used:  'Gently Used',
   is_used:         'Used',
@@ -61,6 +62,12 @@ async function search(query) {
 
   const items = hits
     .filter((hit) => hit.sold !== true)
+    .filter((hit) => {
+      // Algolia fuzzy-matches loosely — keep only genuine Brut items
+      const designer = (hit.designer_names ?? '').toLowerCase();
+      const title    = (hit.title ?? '').toLowerCase();
+      return designer.includes('brut') || title.includes('brut');
+    })
     .map(normalizeHit);
 
   return items;

@@ -1,92 +1,99 @@
-/**
- * Depop scraper using Depop's internal web API.
- */
+const { chromium } = require('playwright');
 
-const fetch = require('node-fetch');
+let browser = null;
 
-const BASE_URL = 'https://webapi.depop.com/api/v2/search/products/';
+async function getBrowser() {
+  if (!browser || !browser.isConnected()) {
+    browser = await chromium.launch({
+      headless: true,
+      channel: 'chrome', // uses system Chrome — passes Depop's bot detection
+      args: ['--disable-blink-features=AutomationControlled'],
+    });
+  }
+  return browser;
+}
 
-const HEADERS = {
-  'User-Agent':
-    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-  Accept: 'application/json',
-  'depop-locale': 'en-GB',
-  'Accept-Language': 'en-GB,en;q=0.9',
-};
+// Graceful shutdown
+process.on('SIGINT',  async () => { await browser?.close(); process.exit(0); });
+process.on('SIGTERM', async () => { await browser?.close(); process.exit(0); });
 
-function normalizeProduct(product) {
-  // Price: Depop returns { priceAmount: "45.00", currencyName: "USD" }
-  const priceObj = product.price ?? null;
-  const price = priceObj?.priceAmount ?? null;
-  const currency = priceObj?.currencyName ?? null;
+// Convert URL slug to readable title
+// slug: "{seller}-brut-{item-words}-{4char-hex}" → "brut {item words}"
+function slugToTitle(slug) {
+  const parts = slug.split('-');
+  const brutIdx = parts.findIndex((p) => p.toLowerCase() === 'brut');
+  if (brutIdx === -1) return slug.replace(/-/g, ' ');
 
-  // Image: preview is an array of objects with a url field
-  const preview = product.preview ?? [];
-  const imageUrl = preview[0]?.url ?? null;
+  // Strip trailing 4-char hex hash if present
+  const last = parts[parts.length - 1];
+  const end = (last.length === 4 && /^[0-9a-f]+$/i.test(last))
+    ? parts.length - 1
+    : parts.length;
 
-  // URL: built from slug
-  const slug = product.slug ?? null;
-  const itemUrl = slug
-    ? `https://www.depop.com/products/${slug}/`
-    : `https://www.depop.com/products/${product.id}/`;
-
-  // Size: sizes is an array of objects with a display field
-  const sizes = product.sizes ?? [];
-  const size = sizes[0]?.display ?? null;
-
-  // Title: use description, trimmed to 100 chars if long
-  const rawTitle = String(product.description ?? '').trim();
-  const title = rawTitle.length > 100 ? rawTitle.slice(0, 100) : rawTitle;
-
-  return {
-    id: `depop:${product.id}`,
-    platform: 'depop',
-    title,
-    price,
-    currency,
-    imageUrl,
-    itemUrl,
-    size,
-    condition: null, // Depop does not expose condition in search results
-  };
+  return parts.slice(brutIdx, end).join(' ');
 }
 
 async function search(query) {
-  const params = new URLSearchParams({
-    q: query,
-    itemsPerPage: '48',
-    country: 'gb',
-    currency: 'USD',
+  const b = await getBrowser();
+  const context = await b.newContext({
+    userAgent:
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36' +
+      ' (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+    locale:   'en-GB',
+    viewport: { width: 1280, height: 800 },
+    extraHTTPHeaders: { 'Accept-Language': 'en-GB,en;q=0.9' },
   });
 
-  const url = `${BASE_URL}?${params}`;
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  });
 
-  const res = await fetch(url, { headers: HEADERS });
+  const page = await context.newPage();
 
-  // Detect non-JSON responses (e.g. Cloudflare blocks, HTML error pages)
-  const contentType = res.headers.get('content-type') ?? '';
-  if (!contentType.includes('application/json')) {
-    throw new Error(
-      `Depop returned non-JSON response (HTTP ${res.status}) — likely rate-limited or blocked`
+  try {
+    await page.goto(
+      `https://www.depop.com/search/?q=${encodeURIComponent(query)}`,
+      { waitUntil: 'domcontentloaded', timeout: 30000 }
     );
+    await page.waitForTimeout(3000); // let React render
+
+    const cards = await page.evaluate(() => {
+      const items = Array.from(document.querySelectorAll('li'))
+        .filter((li) => li.querySelector('a[href*="/products/"]'));
+
+      return items.map((li) => {
+        const a     = li.querySelector('a[href*="/products/"]');
+        const imgs  = li.querySelectorAll('img');
+        const price = li.querySelector('p[class*="styles_price"]')?.textContent?.trim() ?? null;
+        const size  = li.querySelector('p[class*="styles_sizeAttributeText"]')?.textContent?.trim() ?? null;
+        return {
+          href:   a?.href ?? '',
+          imgSrc: imgs[1]?.src ?? imgs[0]?.src ?? null,
+          price,
+          size,
+        };
+      }).filter((c) => c.href.includes('/products/'));
+    });
+
+    return cards.map((card) => {
+      const slug     = card.href.split('/products/')[1]?.replace(/\/$/, '') ?? '';
+      const rawPrice = card.price?.replace(/[^0-9.]/g, '') ?? null;
+      return {
+        id:        `depop:${slug}`,
+        platform:  'depop',
+        title:     slugToTitle(slug),
+        price:     rawPrice,
+        currency:  'USD',
+        imageUrl:  card.imgSrc,
+        itemUrl:   card.href,
+        size:      card.size,
+        condition: null,
+      };
+    });
+
+  } finally {
+    await context.close();
   }
-
-  if (!res.ok) {
-    throw new Error(`Depop API returned ${res.status} ${res.statusText}`);
-  }
-
-  const data = await res.json();
-
-  // The API returns a `products` array; adapt gracefully if the shape differs
-  const products = data.products ?? data.items ?? data.results ?? [];
-
-  return products
-    .filter((p) => {
-      // Only include active listings; skip sold items when detectable
-      const status = p.status ?? '';
-      return status === '' || status === 'Active' || status.toLowerCase() === 'active';
-    })
-    .map(normalizeProduct);
 }
 
 module.exports = { search };

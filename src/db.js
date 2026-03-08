@@ -31,7 +31,19 @@ load();
 
 function insertItem(item) {
   if (itemsById[item.id]) return { changes: 0 };
-  itemsById[item.id] = { ...item, found_at: Date.now() };
+  // Normalize to snake_case so the frontend and API always get consistent field names
+  itemsById[item.id] = {
+    id:        item.id,
+    platform:  item.platform,
+    title:     item.title,
+    price:     item.price     ?? null,
+    currency:  item.currency  ?? 'USD',
+    image_url: item.imageUrl  ?? null,
+    item_url:  item.itemUrl,
+    size:      item.size      ?? null,
+    condition: item.condition ?? null,
+    found_at:  Date.now(),
+  };
   save();
   return { changes: 1 };
 }
