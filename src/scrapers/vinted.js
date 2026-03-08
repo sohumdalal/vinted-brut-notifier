@@ -131,9 +131,9 @@ function isValidItem(item) {
   return true;
 }
 
-function normalizeItem(item, domainSlug) {
+function normalizeItem(item, domainSlug) { // eslint-disable-line no-unused-vars
   return {
-    id:        `vinted-${domainSlug}:${item.id}`,
+    id:        `vinted:${item.id}`,
     platform:  'vinted',
     title:     item.title ?? '',
     price:     item.price?.amount ?? null,
