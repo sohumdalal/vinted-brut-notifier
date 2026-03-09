@@ -620,6 +620,7 @@
       btn.classList.add('active');
 
       currentPlatform = btn.dataset.platform;
+      localStorage.setItem('activePlatform', currentPlatform);
       fetchItems(currentPlatform);
 
       // Reset auto-refresh timer so it counts from this fetch
@@ -635,6 +636,15 @@
 
     // ── Boot ──────────────────────────────────────────────────────────────────
     (function init() {
+      const saved = localStorage.getItem('activePlatform');
+      if (saved) {
+        currentPlatform = saved;
+        const btn = document.querySelector(`.filter-btn[data-platform="${saved}"]`);
+        if (btn) {
+          document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        }
+      }
       fetchItems(currentPlatform);
       autoRefreshTimer = setInterval(() => fetchItems(currentPlatform), 60_000);
     })();
