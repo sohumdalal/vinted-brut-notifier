@@ -3,15 +3,22 @@ const fetch = require('node-fetch');
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36';
 
-// All three Vinted markets — items are per-domain and don't overlap
+// US and UK Vinted markets — .fr excluded (French sellers rarely ship internationally,
+// causing "Message Seller" instead of "Buy Now" for US buyers)
 const DOMAINS = [
-  { host: 'www.vinted.com',   lang: 'en-US,en;q=0.9',               slug: 'com' },
-  { host: 'www.vinted.co.uk', lang: 'en-GB,en;q=0.9,en-US;q=0.8',  slug: 'uk'  },
-  { host: 'www.vinted.fr',    lang: 'fr-FR,fr;q=0.9,en-US;q=0.8',  slug: 'fr'  },
+  { host: 'www.vinted.com',   lang: 'en-US,en;q=0.9',              slug: 'com' },
+  { host: 'www.vinted.co.uk', lang: 'en-GB,en;q=0.9,en-US;q=0.8', slug: 'uk'  },
 ];
 
-// Vinted brand_title values that correspond to the Brut clothing label
-const BRUT_BRANDS = new Set(['brut', 'brut clothing', 'brut archives']);
+// Specific brand_title values used by the Brut clothing label on Vinted.
+// Plain 'brut' is intentionally excluded — it matches the unrelated cologne brand.
+// Includes all spelling variants sellers actually use.
+const BRUT_BRANDS = new Set([
+  'brut clothing',
+  'brut archives',
+  'brut archive',          // missing 's' variant
+  'brut archives paris',   // full name variant
+]);
 
 const NON_CLOTHING_KEYWORDS = [
   'pendentif', 'bougeoir', 'déodorant', 'deodorant', 'désodorisant',
@@ -20,6 +27,10 @@ const NON_CLOTHING_KEYWORDS = [
   'presentoir', 'opale', 'diamant', 'cuarzo', 'meuble', 'speaker',
   'lampe', 'bougie', 'chandelle', 'bois brut', 'coeur en brut',
 ];
+
+// Run all three queries per domain and merge — each query surfaces different items
+// due to Vinted's inconsistent search indexing.
+const VINTED_QUERIES = ['Brut Archives', 'Brut Clothing', 'Brut'];
 
 // Per-domain cookie jars
 const cookieJars = {};
@@ -75,7 +86,6 @@ async function searchPage(domain, { query, perPage = 96, page = 1 } = {}) {
     `order=newest_first`,
     `per_page=${perPage}`,
     `page=${page}`,
-    `status_ids[]=6`,
   ];
   if (query) parts.push(`search_text=${encodeURIComponent(query)}`);
 
@@ -112,15 +122,31 @@ async function searchPage(domain, { query, perPage = 96, page = 1 } = {}) {
   };
 }
 
-async function searchOneDomain(domain, query) {
-  const first    = await searchPage(domain, { query, perPage: 96, page: 1 });
-  const allItems = [...first.items];
-  const pages    = Math.min(2, first.totalPages);
+async function searchOneDomain(domain) {
+  const seenIds = new Set();
+  const allItems = [];
 
-  for (let page = 2; page <= pages; page++) {
-    await new Promise((r) => setTimeout(r, 800));
-    const result = await searchPage(domain, { query, perPage: 96, page });
-    allItems.push(...result.items);
+  for (const query of VINTED_QUERIES) {
+    const first = await searchPage(domain, { query, perPage: 96, page: 1 });
+    const pages = Math.min(5, first.totalPages);
+    const batch = [...first.items];
+
+    for (let page = 2; page <= pages; page++) {
+      await new Promise((r) => setTimeout(r, 800));
+      const result = await searchPage(domain, { query, perPage: 96, page });
+      batch.push(...result.items);
+    }
+
+    // Merge, deduplicating by item ID across queries
+    for (const item of batch) {
+      if (!seenIds.has(item.id)) {
+        seenIds.add(item.id);
+        allItems.push(item);
+      }
+    }
+
+    // Brief pause between queries on the same domain
+    await new Promise((r) => setTimeout(r, 1200));
   }
 
   return allItems;
@@ -133,11 +159,17 @@ function isValidItem(item) {
 
   if (NON_CLOTHING_KEYWORDS.some((kw) => title.includes(kw))) return false;
 
-  // "Brut Archives" anywhere in the title — high confidence
-  if (title.includes('brut archives')) return true;
+  // Brand name variants in title — case-insensitive (title is already lowercased above)
+  if (
+    title.includes('brut archives') ||
+    title.includes('brut archive')  ||
+    title.includes('brut clothing') ||
+    title.includes('brut paris')
+  ) return true;
 
-  // "BRUT" in the title + brand is a known Brut label — cross-check keeps cologne out
-  if (title.includes('brut') && BRUT_BRANDS.has(brand)) return true;
+  // Seller tagged the brand explicitly — catches items with generic titles like "Hoodie".
+  // Also require a size_title: clothing has a size, cologne bottles don't.
+  if (BRUT_BRANDS.has(brand) && item.size_title) return true;
 
   return false;
 }
@@ -153,13 +185,14 @@ function normalizeItem(item, domainSlug) { // eslint-disable-line no-unused-vars
     itemUrl:   item.url,
     size:      item.size_title ?? null,
     condition: null,
+    listedAt:  item.created_at_ts ? item.created_at_ts * 1000 : null,
   };
 }
 
-async function search(query) {
-  // Search all three domains in parallel — each has independent inventory
+async function search() {
+  // Search both domains in parallel — each runs all queries internally
   const results = await Promise.allSettled(
-    DOMAINS.map((domain) => searchOneDomain(domain, query))
+    DOMAINS.map((domain) => searchOneDomain(domain))
   );
 
   const items = [];
@@ -169,9 +202,9 @@ async function search(query) {
       console.warn(`[vinted] ${DOMAINS[i].host} skipped: ${reason.message}`);
       continue;
     }
-    for (const item of value) {
-      if (isValidItem(item)) items.push(normalizeItem(item, DOMAINS[i].slug));
-    }
+    const valid = value.filter(isValidItem).map((item) => normalizeItem(item, DOMAINS[i].slug));
+    console.log(`[vinted] ${DOMAINS[i].host} → ${value.length} raw, ${valid.length} valid`);
+    items.push(...valid);
   }
 
   return items;

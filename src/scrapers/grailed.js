@@ -34,6 +34,7 @@ function normalizeHit(hit) {
     itemUrl,
     size:      hit.size ?? null,
     condition,
+    listedAt:  hit.created_at_i ? hit.created_at_i * 1000 : null,
   };
 }
 

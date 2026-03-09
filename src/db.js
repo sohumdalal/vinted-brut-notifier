@@ -42,6 +42,7 @@ function insertItem(item) {
     item_url:  item.itemUrl,
     size:      item.size      ?? null,
     condition: item.condition ?? null,
+    listed_at: item.listedAt  ?? null,
     found_at:  Date.now(),
   };
   save();
@@ -53,7 +54,8 @@ function getItems({ platform, limit = 200 } = {}) {
   if (platform && platform !== 'all') {
     items = items.filter((i) => i.platform === platform);
   }
-  items.sort((a, b) => b.found_at - a.found_at);
+  // Sort by actual listing date when available, fall back to when we first saw it
+  items.sort((a, b) => (b.listed_at ?? b.found_at ?? 0) - (a.listed_at ?? a.found_at ?? 0));
   return items.slice(0, limit);
 }
 

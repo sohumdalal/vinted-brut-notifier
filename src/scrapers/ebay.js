@@ -64,6 +64,7 @@ async function search(query) {
     itemUrl:   item.itemWebUrl,
     size:      item.localizedAspects?.find((a) => a.name === 'Size')?.value ?? null,
     condition: item.condition ?? null,
+    listedAt:  item.itemCreationDate ? new Date(item.itemCreationDate).getTime() : null,
   }));
 }
 

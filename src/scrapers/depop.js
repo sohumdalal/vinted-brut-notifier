@@ -88,6 +88,7 @@ async function search(query) {
         itemUrl:   card.href,
         size:      card.size,
         condition: null,
+        listedAt:  null, // not available from Depop's HTML search results
       };
     });
 

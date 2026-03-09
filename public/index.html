@@ -348,6 +348,27 @@
       border-color: var(--accent);
     }
 
+    /* ── New today highlight ── */
+    .card--new {
+      border-color: #f5c518;
+      box-shadow: 0 0 0 2px rgba(245, 197, 24, 0.2);
+    }
+
+    .new-badge {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      background: #f5c518;
+      color: #111;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 3px 7px;
+      border-radius: 10px;
+      line-height: 1.4;
+    }
+
     /* ── Empty state ── */
     .empty-state {
       grid-column: 1 / -1;
@@ -459,7 +480,14 @@
       } else if (currentSort === 'price-desc') {
         sorted.sort((a, b) => (parseFloat(b.price) || 0) - (parseFloat(a.price) || 0));
       }
-      // 'newest' is already found_at DESC from the API — no sort needed
+      // 'newest' sorts by listed_at (actual post date), falling back to found_at
+      if (currentSort === 'newest') {
+        sorted.sort((a, b) => {
+          const ta = a.listed_at ?? a.found_at ?? 0;
+          const tb = b.listed_at ?? b.found_at ?? 0;
+          return tb - ta;
+        });
+      }
       return sorted;
     }
 
@@ -471,6 +499,9 @@
       const title = escapeHtml(item.title || 'Untitled');
       const itemUrl = escapeHtml(item.item_url || '#');
       const badge = platformLabel(platform);
+
+      const DAY_MS = 86400000;
+      const isNew = item.listed_at && (Date.now() - item.listed_at) < DAY_MS;
 
       const imageHtml = item.image_url
         ? `<img
@@ -492,10 +523,11 @@
         : '';
 
       return `
-        <article class="card">
+        <article class="card${isNew ? ' card--new' : ''}">
           <div class="card-image-wrap">
             ${imageHtml}
             <span class="platform-badge ${badgeClass(platform)}">${badge}</span>
+            ${isNew ? '<span class="new-badge">New Today</span>' : ''}
           </div>
           <div class="card-body">
             <div class="card-title">${title}</div>
