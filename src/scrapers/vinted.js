@@ -10,6 +10,9 @@ const DOMAINS = [
   { host: 'www.vinted.fr',    lang: 'fr-FR,fr;q=0.9,en-US;q=0.8',  slug: 'fr'  },
 ];
 
+// Vinted brand_title values that correspond to the Brut clothing label
+const BRUT_BRANDS = new Set(['brut', 'brut clothing', 'brut archives']);
+
 const NON_CLOTHING_KEYWORDS = [
   'pendentif', 'bougeoir', 'déodorant', 'deodorant', 'désodorisant',
   'desodorizante', 'after shave', 'aftershave', 'eau de toilette',
@@ -126,9 +129,17 @@ async function searchOneDomain(domain, query) {
 function isValidItem(item) {
   if (item.is_visible === false) return false;
   const title = (item.title ?? '').toLowerCase();
-  if (!title.includes('brut archives')) return false;
+  const brand = (item.brand_title ?? '').toLowerCase();
+
   if (NON_CLOTHING_KEYWORDS.some((kw) => title.includes(kw))) return false;
-  return true;
+
+  // "Brut Archives" anywhere in the title — high confidence
+  if (title.includes('brut archives')) return true;
+
+  // "BRUT" in the title + brand is a known Brut label — cross-check keeps cologne out
+  if (title.includes('brut') && BRUT_BRANDS.has(brand)) return true;
+
+  return false;
 }
 
 function normalizeItem(item, domainSlug) { // eslint-disable-line no-unused-vars
